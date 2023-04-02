@@ -71,17 +71,18 @@ if(joinOp == '-p') myCreateSocket(peerInfo.split(':')[1]);//create client
 //--------------------------
 //myCreateServer: takes a port and creates a server to listen on that port and carry out server operations
 //--------------------------
-function searchClosestPeer(it, imgNamSiz, imgNam){
+function searchClosestPeer(it, imgNamSiz, imgNam, orgPeerPort){
     let m = `${ip}:${myPort}, ${singleton.getPeerID(ip,myPort)}`;
     let dht = noNullDHT();
     let xor = dht.map(d=>parseInt(`${singleton.XORing(d, m)}`));
     let closestPort = dht[xor.indexOf(Math.max(...xor))].split(',')[0].split(':')[1];
     let imageSearchSocket = new net.Socket();
+    let orgPeer = orgPeerPort==null?`${ip}:${myPort}`:`${ip}:${orgPeerPort}`
     imageSearchSocket.connect({port:closestPort,host:ip,localAddress:ip/*,localPort:singleton.getPort()*/}, ()=>{
         let pkt = cPTP;
-        pkt.init(7,3, folderName, noNullDHT(), `${ip}:${myPort}`, {IT:it, imageNameSize:imgNamSiz, imageName:imgNam})
+        pkt.init(7,3, folderName, noNullDHT(), orgPeer, {IT:it, imageNameSize:imgNamSiz, imageName:imgNam})
         imageSearchSocket.write(pkt.getBytePacket(),()=>{
-            console.log(`Sending kadPTP request message to ${ip}:${closestPort}`)
+            console.log(`\nSending kadPTP request message to ${ip}:${closestPort}`)
             imageSearchSocket.destroy();
         })
     })
@@ -194,11 +195,19 @@ async function readData(data, sock){
     let msgType = parseBitPacket(data, 4, 8);//the message type num; must be either 1 or 2
     if (version != 7) return console.log(`version number provided '${version}' !== 7`);
     if(msgType === 4){
-        // let sequenceNum = parseBitPacket(data, 12, 20);
-        // let timeStp = parseBitPacket(data, 32, 32);
-        // let imgSize = parseBitPacket(data, 64, 32);
-        // let imgData; 
-        clientSockets[`${ip}:${imagePort}`].write(data,()=>{
+        let sequenceNum = parseBitPacket(data, 12, 20);
+        let timeStp = parseBitPacket(data, 32, 32);
+        let imgSize = parseBitPacket(data, 64, 32);
+        let imgData = new Buffer.alloc(imgSize);
+        data.copy(imgData,0,12,imgSize*8);
+        ITPpacket.init(
+            version,
+            1, // response type
+            sequenceNum, // sequence number
+            timeStp, // timestamp
+            imgData, // image data
+          ); 
+        clientSockets[`${ip}:${imagePort}`].write(ITPpacket.getBytePacket(),()=>{
             console.log(`ITP packet response received to forward the image to the client`)
             clientSockets[`${ip}:${imagePort}`].end();
             delete clientSockets[`${ip}:${imagePort}`];
@@ -261,10 +270,10 @@ async function readData(data, sock){
             if (msgType == 1){//for welcome packets
                 console.log(`Connected to ${senderName}:${rem} at timestamp: ${singleton.getTimestamp()}\n`);
                 console.log(`This peer address is ${ip}:${loc} located at ${folderName} [${singleton.getPeerID(ip, loc)}]\n`);
-                console.log(`Received a welcome message from ${senderName}\n   along with DHT: ${dTable.length===0?'[]':dTable}`);
+                console.log(`Received a Welcome message from ${senderName}\n   along with DHT: ${dTable.length===0?'[]':dTable}`);
             }
             else if (msgType == 2)//for hello packets
-                console.log(`Received a hello message from ${senderName}\n   along with DHT: ${dTable.length===0?'[]':dTable}`);
+                console.log(`Received a Hello Message from ${senderName}\n   along with DHT: ${dTable.length===0?'[]':dTable}`);
             
             
             index = dataArr.indexOf(`${ip}:${loc}`);
@@ -431,7 +440,7 @@ function handleClientRequests(data, sock) {
         imageTypeName +
         "\n    --Image file name: " +
         imageName +
-        "\n"
+        ""
     );
     if (version == 7) {  
       let imageFullName = imageName + "." + imageTypeName.toLowerCase();
@@ -447,12 +456,14 @@ function handleClientRequests(data, sock) {
           imageData, // image data
         );
   
-        sock.write(ITPpacket.getBytePacket());
-        sock.end();
+        sock.write(ITPpacket.getBytePacket(),()=>{
+            sock.end();
+        });
+            
       }
       else{
         //search peers
-        searchClosestPeer(imageType, imageNameSize, imageName)
+        searchClosestPeer(imageType, imageNameSize, imageName, null)
       }
     } else {
       console.log("The protocol version is not supported");
@@ -461,7 +472,7 @@ function handleClientRequests(data, sock) {
 }
   
 function handleClientLeaving(sock) {
-    console.log(nickNames[sock.id] + " closed the connection");
+    console.log('\n'+nickNames[sock.id] + " closed the connection");
 }
 
 function handleKADImageRequests(sName,recPeerInfo,imageType,imageNameSize,imageName) {
@@ -518,7 +529,7 @@ function handleKADImageRequests(sName,recPeerInfo,imageType,imageNameSize,imageN
     }
     else{
         //search peers
-        searchClosestPeer(imageType, imageNameSize, imageName)
+        searchClosestPeer(imageType, imageNameSize, imageName, orgPeerPort)
     }
 
 }
