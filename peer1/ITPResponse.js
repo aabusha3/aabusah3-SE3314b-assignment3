@@ -37,12 +37,11 @@ module.exports = {
 
     //fill the payload bitstream:
     //--------------------------
-    this.payload = new Buffer.alloc(imageData.length + 4);
-
+    if(imageData.length !== 0) this.payload = new Buffer.alloc(imageData.length + 4);
     // Image data    
-    for (j = 0; j < imageData.length; j++) {
+    if(imageData.length !== 0) for (j = 0; j < imageData.length; j++) 
       this.payload[j] = imageData[j];
-    }
+    
   },
 
   //--------------------------

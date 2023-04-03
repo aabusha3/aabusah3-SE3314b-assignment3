@@ -1,6 +1,6 @@
-* what happens if there are no peers in the dht to forward to
-* what happens if the image doesnt exist in the network
-* how do I make sure I dont keep searching in a loop
+* what happens if there are no peers in the dht to forward to (tested)
+* what happens if the image doesnt exist in the network (tested)
+* how do I make sure I dont keep searching in a loop (tested)
 * formatting?
 * pad 4 vs pad 8
 * why does peer 2 connect twice to peer 1 in the demo pics
