@@ -94,8 +94,8 @@ async function myCreateServer(myPort){
             
         }
         else{
-            pushBucket(dhtTable, ip+':'+sock.remotePort);//add the client to server's dht
             if(joinOp != '-p') sendWelcome(sock);//sent to new clients
+            pushBucket(dhtTable, ip+':'+sock.remotePort);//add the client to server's dht
 
         }
         sock.on('data',(data)=>{

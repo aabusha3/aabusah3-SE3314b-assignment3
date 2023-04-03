@@ -3,3 +3,6 @@
 !/peer1
 ops
 node_modules
+*.jpeg
+*.gif
+*.png
