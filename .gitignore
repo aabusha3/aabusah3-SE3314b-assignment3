@@ -6,3 +6,4 @@ node_modules
 *.jpeg
 *.gif
 *.png
+/Client
