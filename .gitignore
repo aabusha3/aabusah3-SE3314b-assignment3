@@ -7,3 +7,4 @@ node_modules
 *.gif
 *.png
 /Client
+t.js
