@@ -545,10 +545,9 @@ function handleKADImageRequests(sName,recPeerInfo,imageType,imageNameSize,imageN
     // }
     // else{
         let imageFullName = imageName + "." + imageTypeName.toLowerCase();
-        let imageData
-        if(imageTable.indexOf(`${imageFullName}, ${singleton.getKeyID(imageFullName)}`) > -1) 
-            imageData = fs.readFileSync(imageFullName);   
-        else imageData = []
+        if(imageTable.indexOf(`${imageFullName}, ${singleton.getKeyID(imageFullName)}`) > -1) {
+            let imageData = fs.readFileSync(imageFullName);   
+       // else imageData = []
             ITPpacket.init(
             7,
             4, // response type
@@ -560,14 +559,18 @@ function handleKADImageRequests(sName,recPeerInfo,imageType,imageNameSize,imageN
             let imageFound = new net.Socket();
             imageFound.connect({port:orgPeerPort,host:ip,localAddress:ip/*,localPort:singleton.getPort()*/}, ()=>{
                 imageFound.write(ITPpacket.getBytePacket(),()=>{
-                    if(imageTable.indexOf(`${imageFullName}, ${singleton.getKeyID(imageFullName)}`) > -1) console.log(`Sending kadPTP response message to ${recPeerInfo}`)
-                    else console.log(`Requested Image ${imageFullName} was not found on this network`)
+                  //  if(imageTable.indexOf(`${imageFullName}, ${singleton.getKeyID(imageFullName)}`) > -1) 
+                    console.log(`Sending kadPTP response message to ${recPeerInfo}`)
+                   // else console.log(`Requested Image ${imageFullName} was not found on this network`)
                     
                     imageFound.destroy();
                 })
             })
         
-
+        }
+        else {
+            searchClosestPeer(imageFullName, imageType, orgPeerPort)
+        }
     // }
 }
   
