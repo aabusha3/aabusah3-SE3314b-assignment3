@@ -13,7 +13,7 @@ const joinOp = process.argv[2];//join flag or null
 const peerInfo = process.argv[3];//host peer info or null
 const ip = '127.0.0.1';//the set ip
 let myPort;
-switch(folderName){
+switch(folderName){//hard set port for peers
     case 'peer1':
         myPort = 2001;
         break;
@@ -38,12 +38,12 @@ switch(folderName){
 let dhtTable = [];//the proper dht table with 160 k-buckets
 let dhtCopy = [];//a copy of the dht table to exahust
 let client = new net.Socket();//the client socket
-let server = new net.Server();
+let server = new net.Server();//the kad server
 
 if (singleton.getTimestamp() == null) singleton.init();//start timer
 
-let imageTable = [];//`name, key`
-fs.readdir(__dirname, (err, files) =>{
+let imageTable = [];//to store local images
+fs.readdir(__dirname, (err, files) =>{//read local files
     files.forEach(file => {
         switch(path.extname(file)){
             case '.bmp': case '.jpeg': case '.gif': case '.png': case '.tiff': case '.raw': 
@@ -53,6 +53,7 @@ fs.readdir(__dirname, (err, files) =>{
     });
 }) 
 
+//image server detail
 let imagePort ;
 let imageServer = singleton.getPort();
 let imageDB = net.createServer();
@@ -62,50 +63,24 @@ console.log('ImageDB server is started at timestamp: '+singleton.getTimestamp()+
 
 imageDB.on('connection', function(sock) {
     imagePort = sock.remotePort;
-    handleClientJoining(sock); //called for each client joining
+    handleClientJoining(sock); //called for each image client joining
 });
 
-if(joinOp != '-p') myCreateServer(myPort);//create server
-if(joinOp == '-p') myCreateSocket(peerInfo.split(':')[1]);//create client
+if(joinOp != '-p') myCreateServer(myPort);//create jad server
+if(joinOp == '-p') myCreateSocket(peerInfo.split(':')[1]);//create kad client
 
 //--------------------------
 //myCreateServer: takes a port and creates a server to listen on that port and carry out server operations
 //--------------------------
-function searchClosestPeer(imageFullName, it, orgPeerPort){
-    let keyId = singleton.Hex2Bin(singleton.getKeyID(imageFullName));
-    let dht = noNullDHT();
-    let peerTable = [];
-    for(let s of dht)
-        peerTable.push(singleton.Hex2Bin(singleton.getPeerID(s.split(',')[0].split(':')[0], s.split(',')[0].split(':')[1])));
-    let disTable = [];
-    for(let pId of peerTable)
-        disTable.push(parseInt(singleton.XORing(pId, keyId) ,2));
-    let closest = disTable.indexOf(Math.min(...disTable))
-
-    let closestPort = dht[closest].split(',')[0].split(':')[1];
-    let imageSearchSocket = new net.Socket();
-    imageSearchSocket.connect({port:closestPort,host:ip,localAddress:ip/*,localPort:singleton.getPort()*/}, ()=>{
-        let pkt = cPTP;
-        pkt.init(7,3, folderName, noNullDHT(), `${ip}:${orgPeerPort}`, {IT:it, imageNameSize:imageFullName.split('.')[0].length, imageName:imageFullName.split('.')[0]})
-        imageSearchSocket.write(pkt.getBytePacket(),()=>{
-            console.log(`\nSending kadPTP request message to ${ip}:${closestPort}`)
-            imageSearchSocket.destroy();
-        })
-    })
-}
 async function myCreateServer(myPort){
     server = net.createServer((sock)=>{
-        if(sock.remotePort >= 3000 ){//&& sock.remotePort <= 5000
-            //image
-            
-        }
+        if(sock.remotePort >= 3000 ) ;//ignore if image server connects 
         else{
-            if(joinOp != '-p') sendWelcome(sock);//sent to new clients
+            if(joinOp != '-p') sendWelcome(sock);//sent welcome packets to new clients
             pushBucket(dhtTable, ip+':'+sock.remotePort);//add the client to server's dht
-
         }
         sock.on('data',(data)=>{
-            readData(data, sock);//interpret hello packets
+            readData(data, sock);//interpret welcome + hello + image search + image response packets
         })
     })
     server.listen(myPort, ip, ()=>{//start listening on this port
@@ -124,12 +99,12 @@ async function myCreateSocket(peerPort){
     })
     client.on('data', (data)=>{
         readData(data, client);//interpret welcome packets
-        dhtCopy = noNullDHT();
+        dhtCopy = noEmptyDHT();
         const index = dhtCopy.indexOf(`${ip}:${peerPort}, ${singleton.getPeerID(ip, peerPort)}`);
         if (index > -1) {//send hello packet to host server
             dhtCopy.splice(index, 1); 
             let pkt = cPTP;
-            let fullDHT = noNullDHT();
+            let fullDHT = noEmptyDHT();
             pkt.init(7, 2, folderName, fullDHT);
             client.write(pkt.getBytePacket(), (err)=>{
                 client.end();
@@ -153,7 +128,7 @@ async function sendWelcome(sock){
     const sockAddr = `${sock.remoteAddress}:${sock.remotePort}`;
     console.log(`Connected from peer ${sockAddr}`);
     const pkt = cPTP;
-    const dht = noNullDHT();
+    const dht = noEmptyDHT();
     pkt.init(7, 1, folderName, dht);
     sock.write(pkt.getBytePacket());
 }
@@ -172,7 +147,7 @@ async function sendHello(T){
     let cli = new net.Socket();
     cli.connect({port:port,host:ip,localAddress:ip,localPort:myPort}, ()=>{
         let pkt = cPTP;
-        let fullDHT = noNullDHT();
+        let fullDHT = noEmptyDHT();
         pkt.init(7, 2, folderName, fullDHT);
         cli.write(pkt.getBytePacket(), (err)=>{
             cli.destroy();
@@ -200,14 +175,15 @@ async function readData(data, sock){
     let version = parseBitPacket(data, 0, 4);//the version num; must be 7
     let msgType = parseBitPacket(data, 4, 8);//the message type num; must be either 1 or 2
     if (version != 7) return console.log(`version number provided '${version}' !== 7`);
-    if(msgType === 4){
+
+    if(msgType === 4){//for image found response
         let sequenceNum = parseBitPacket(data, 12, 20);
         let timeStp = parseBitPacket(data, 32, 32);
         let imgSize = parseBitPacket(data, 64, 32);
         let imgData = new Buffer.alloc(imgSize);
         data.copy(imgData,0,12,imgSize*8);
         let res =1;
-        if(imgSize==0) res = 2;
+        if(imgSize==0) res = 2;//if not found
         ITPpacket.init(
             version,
             res, // response type
@@ -215,21 +191,15 @@ async function readData(data, sock){
             timeStp, // timestamp
             imgData, // image data
           ); 
-        clientSockets[`${ip}:${imagePort}`].write(ITPpacket.getBytePacket(),()=>{
+        clientSockets[`${ip}:${imagePort}`].write(ITPpacket.getBytePacket(),()=>{//send to image client
             console.log(`ITP packet response received to forward the image to the client`)
             clientSockets[`${ip}:${imagePort}`].end();
-            delete clientSockets[`${ip}:${imagePort}`];
+            delete clientSockets[`${ip}:${imagePort}`];//get rid of the stored image socket
 
         })
-        // let imageFoundPeerToClient = new net.Socket()
-        // imageFoundPeerToClient.connect({port:imagePort,host:ip,localAddress:ip},()=>{
-        //     imageFoundPeerToClient.write(data,()=>{
-        //         imageFoundPeerToClient.destroy();
-        //     })
-        // })
         
     }
-    else{
+    else{//for welcome + hello + image search request
         let numberOfPeers = parseBitPacket(data, 12, 8);//number of peers on sender's dht table
         let senderNameLength = parseBitPacket(data, 20, 12);//length of sender's name
         let senderName = new Buffer.alloc(senderNameLength)//the name translated from n bytes
@@ -237,7 +207,7 @@ async function readData(data, sock){
         senderName = bytesToString(senderName)
         
 
-        if(msgType === 3){
+        if(msgType === 3){//for image search
             const r = senderNameLength % 4;//add padding to read the packet correctly based on the sender's name length
             const payloadOffset = ((4+senderNameLength) + (r===0?r:(4-r)))*8;
             let ip0 = parseBitPacket(data, payloadOffset, 8);
@@ -245,7 +215,7 @@ async function readData(data, sock){
             let ip16 = parseBitPacket(data, payloadOffset + 16, 8);
             let ip24 = parseBitPacket(data, payloadOffset + 24, 8);
             let portNumber = parseBitPacket(data, payloadOffset + 32, 16);
-            let recOrgPeerInfo = `${ip0}.${ip8}.${ip16}.${ip24}:${portNumber}`;
+            let recOrgPeerInfo = `${ip0}.${ip8}.${ip16}.${ip24}:${portNumber}`;//original peer ip:port
             let imgType = parseBitPacket(data, payloadOffset + 64, 4);
             let imgNameSize = parseBitPacket(data, payloadOffset + 68, 28);
             let imgName = new Buffer.alloc(imgNameSize)//the image name translated from n bytes
@@ -255,7 +225,7 @@ async function readData(data, sock){
             handleKADImageRequests(senderName,recOrgPeerInfo,imgType,imgNameSize,imgName)
         }
 
-        else if(msgType===1 || msgType===2){
+        else if(msgType===1 || msgType===2){//for kad welcome and hello packets
             let dataArr = [];
             const r = senderNameLength % 4;//add padding to read the packet correctly based on the sender's name length
             const payloadOffset = ((4+senderNameLength) + (r===0?r:(4-r)))*8;
@@ -300,16 +270,16 @@ function refreshBuckets(T, Pn){
 
     console.log('Refresh k-Bucket operation is performed.\n');
     let str = 'My DHT: ';
-    let tempT = noNullDHT();
+    let tempT = noEmptyDHT();
     for (let i = 0; i < tempT.length; i++) str+= `[${tempT[i]}]\n        `;
 
     console.log(str);
 }
 
 //--------------------------
-//noNullDHT: returns a table without empty entries from the dht table
+//noEmptyDHT: returns a table without empty entries from the dht table
 //--------------------------
-function noNullDHT(){
+function noEmptyDHT(){
     let dhtEntries = [];
       let e = 0;
 
@@ -470,7 +440,6 @@ function handleClientRequests(data, sock) {
             
       }
       else{
-        //search peers
         if(dhtTable.length===0){
             ITPpacket.init(
                 version,
@@ -499,7 +468,6 @@ function handleClientLeaving(sock) {
 
 function handleKADImageRequests(sName,recPeerInfo,imageType,imageNameSize,imageName) {
     console.log(`\nReceived kadPTP search request from: ${sName}`);
-    //printPacketBit(data);
   
     let imageExtension = {
       1: "BMP",
@@ -528,52 +496,60 @@ function handleKADImageRequests(sName,recPeerInfo,imageType,imageNameSize,imageN
         "\n"
     );
     let orgPeerPort = recPeerInfo.split(':')[1];
-    // if(parseInt(orgPeerPort) === parseInt(myPort)){//experimental
-    //     ITPpacket.init(
-    //         7,
-    //         2, // response type
-    //         singleton.getSequenceNumber(), // sequence number
-    //         singleton.getTimestamp(), // timestamp
-    //         [], // image data
-    //     ); 
-    //     clientSockets[`${ip}:${imagePort}`].write(ITPpacket.getBytePacket(),()=>{
-    //         console.log(`image was not found in this network`)
-    //         clientSockets[`${ip}:${imagePort}`].end();
-    //         delete clientSockets[`${ip}:${imagePort}`];
 
-    //     })
-    // }
-    // else{
-        let imageFullName = imageName + "." + imageTypeName.toLowerCase();
-        if(imageTable.indexOf(`${imageFullName}, ${singleton.getKeyID(imageFullName)}`) > -1) {
-            let imageData = fs.readFileSync(imageFullName);   
-       // else imageData = []
-            ITPpacket.init(
-            7,
-            4, // response type
-            singleton.getSequenceNumber(), // sequence number
-            singleton.getTimestamp(), // timestamp
-            imageData, // image data
-            );
+    let imageFullName = imageName + "." + imageTypeName.toLowerCase();
+    if(imageTable.indexOf(`${imageFullName}, ${singleton.getKeyID(imageFullName)}`) > -1) {
+        let imageData = fs.readFileSync(imageFullName);   
 
-            let imageFound = new net.Socket();
-            imageFound.connect({port:orgPeerPort,host:ip,localAddress:ip/*,localPort:singleton.getPort()*/}, ()=>{
-                imageFound.write(ITPpacket.getBytePacket(),()=>{
-                  //  if(imageTable.indexOf(`${imageFullName}, ${singleton.getKeyID(imageFullName)}`) > -1) 
-                    console.log(`Sending kadPTP response message to ${recPeerInfo}`)
-                   // else console.log(`Requested Image ${imageFullName} was not found on this network`)
-                    
-                    imageFound.destroy();
-                })
+        ITPpacket.init(
+        7,
+        4, // response type
+        singleton.getSequenceNumber(), // sequence number
+        singleton.getTimestamp(), // timestamp
+        imageData, // image data
+        );
+
+        let imageFound = new net.Socket();
+        imageFound.connect({port:orgPeerPort,host:ip,localAddress:ip}, ()=>{
+            imageFound.write(ITPpacket.getBytePacket(),()=>{
+                console.log(`Sending kadPTP response message to ${recPeerInfo}`)
+                
+                imageFound.destroy();
             })
-        
-        }
-        else {
-            searchClosestPeer(imageFullName, imageType, orgPeerPort)
-        }
-    // }
+        })
+    
+    }
+    else {
+        searchClosestPeer(imageFullName, imageType, orgPeerPort)
+    }
 }
   
+//--------------------------
+//searchClosestPeer: searches the closest peer to the image in the dht
+//--------------------------
+function searchClosestPeer(imageFullName, it, orgPeerPort){
+    let keyId = singleton.Hex2Bin(singleton.getKeyID(imageFullName));
+    let dht = noEmptyDHT();
+    let peerTable = [];
+    for(let s of dht)
+        peerTable.push(singleton.Hex2Bin(singleton.getPeerID(s.split(',')[0].split(':')[0], s.split(',')[0].split(':')[1])));
+    let disTable = [];
+    for(let pId of peerTable)
+        disTable.push(parseInt(singleton.XORing(pId, keyId) ,2));
+    let closest = disTable.indexOf(Math.min(...disTable))
+
+    let closestPort = dht[closest].split(',')[0].split(':')[1];
+    let imageSearchSocket = new net.Socket();
+    imageSearchSocket.connect({port:closestPort,host:ip,localAddress:ip/*,localPort:singleton.getPort()*/}, ()=>{
+        let pkt = cPTP;
+        pkt.init(7,3, folderName, noEmptyDHT(), `${ip}:${orgPeerPort}`, {IT:it, imageNameSize:imageFullName.split('.')[0].length, imageName:imageFullName.split('.')[0]})
+        imageSearchSocket.write(pkt.getBytePacket(),()=>{
+            console.log(`\nSending kadPTP request message to ${ip}:${closestPort}`)
+            imageSearchSocket.destroy();
+        })
+    })
+}
+
 function assignClientName(sock, nickNames) {
     sock.id = sock.remoteAddress + ":" + sock.remotePort;
     startTimestamp[sock.id] = singleton.getTimestamp();
